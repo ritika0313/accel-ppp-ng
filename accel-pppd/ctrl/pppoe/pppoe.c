@@ -1188,6 +1188,7 @@ static void pppoe_recv_PADR(struct pppoe_serv_t *serv, uint8_t *pack, int size)
 	struct pppoe_tag *ac_cookie_tag = NULL;
 	struct pppoe_tag *service_name_tag = NULL;
 	struct pppoe_tag *tr101_tag = NULL;
+	int service_name_tag_count = 0;
 	int n, service_match = 0;
 	struct pppoe_conn_t *conn;
 	int vendor_id;
@@ -1237,6 +1238,7 @@ static void pppoe_recv_PADR(struct pppoe_serv_t *serv, uint8_t *pack, int size)
 				break;
 			case TAG_SERVICE_NAME:
 				service_name_tag = tag;
+				service_name_tag_count++;
 				if (tag->tag_len == 0)
 					service_match = 1;
 				else if (conf_service_name[0]) {
@@ -1274,6 +1276,13 @@ static void pppoe_recv_PADR(struct pppoe_serv_t *serv, uint8_t *pack, int size)
 					ppp_max_payload = ntohs(*(uint16_t *)tag->tag_data);
 				break;
 		}
+	}
+
+	if (service_name_tag_count != 1) {
+		if (conf_verbose)
+			log_warn("pppoe: discard PADR packet (must contain exactly one Service-Name tag, found %d)\n", service_name_tag_count);
+		pppoe_send_err(serv, ethhdr->h_source, host_uniq_tag, relay_sid_tag, CODE_PADS, TAG_SERVICE_NAME_ERROR);
+		return;
 	}
 
 	if (!ac_cookie_tag) {
