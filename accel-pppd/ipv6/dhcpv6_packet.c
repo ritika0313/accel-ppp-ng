@@ -167,6 +167,7 @@ struct dhcpv6_packet *dhcpv6_packet_parse(const void *buf, size_t size)
 	struct dhcpv6_relay *rel;
 	struct dhcpv6_relay_hdr *rhdr;
 	int aftr_name_seen = 0;
+	int relay_depth = 0;
 	void *ptr, *endptr;
 
 	if (size < sizeof(struct dhcpv6_msg_hdr)) {
@@ -191,6 +192,10 @@ struct dhcpv6_packet *dhcpv6_packet_parse(const void *buf, size_t size)
 	endptr = ((void *)pkt->hdr) + size;
 
 	while (pkt->hdr->type == D6_RELAY_FORW) {
+		if (relay_depth++ >= DHCPV6_HOP_COUNT_LIMIT) {
+			log_warn("dhcpv6: relay nesting depth exceeds HOP_COUNT_LIMIT \n");
+			goto error;
+		}
 		rhdr = (struct dhcpv6_relay_hdr *)pkt->hdr;
 		if (((void *)rhdr) + sizeof(*rhdr) > endptr) {
 			log_warn("dhcpv6: invalid packet received\n");
@@ -220,7 +225,7 @@ struct dhcpv6_packet *dhcpv6_packet_parse(const void *buf, size_t size)
 
 			if (opth->code == htons(D6_OPTION_RELAY_MSG)) {
 				pkt->hdr = (struct dhcpv6_msg_hdr *)opth->data;
-				endptr = opth->data + sizeof(*opth) + ntohs(opth->len);
+				endptr = opth->data + ntohs(opth->len);
 			}
 
 			ptr += sizeof(*opth) + ntohs(opth->len);
@@ -374,6 +379,12 @@ struct dhcpv6_packet *dhcpv6_packet_alloc_reply(struct dhcpv6_packet *req, int t
 
 	while (!list_empty(&req->relay_list)) {
 		rel = list_entry(req->relay_list.next, typeof(*rel), entry);
+		/* Ensure each relay header fits within the reply buffer */
+		if ((char *)pkt->hdr + sizeof(struct dhcpv6_relay_hdr) + sizeof(struct dhcpv6_opt_hdr) >
+		    (char *)(pkt + 1) + BUF_SIZE) {
+			log_warn("dhcpv6: relay layer count exceeds reply buffer capacity\n");
+			goto error;
+		}
 		rel->hdr = (void *)pkt->hdr;
 		pkt->hdr = (void *)rel->hdr + sizeof(struct dhcpv6_relay_hdr) + sizeof(struct dhcpv6_opt_hdr);
 		list_move_tail(&rel->entry, &pkt->relay_list);
