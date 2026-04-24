@@ -608,20 +608,22 @@ static void print_ipv6addr_array(struct dhcpv6_option *opt, void (*print)(const 
 static void print_status(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...))
 {
 	struct dhcpv6_opt_status *o = (struct dhcpv6_opt_status *)opt->hdr;
-	static char *status_name[] = {
+	static const char *status_name[] = {
 		"Success",
 		"UnspecFail",
 		"NoAddrsAvail",
 		"NoBindings",
 		"NotOnLink",
-		"UseMulticast"
+		"UseMulticast",
 		"NoPrefixAvail"
 	};
+	unsigned int status_code = ntohs(o->code);
+	size_t status_name_count = sizeof(status_name) / sizeof(status_name[0]);
 
-	if (ntohs(o->code) < 0 || ntohs(o->code) > sizeof(status_name))
-		print(" %u", ntohs(o->code));
+	if (status_code >= status_name_count)
+		print(" %u", status_code);
 	else
-		print(" %s", status_name[ntohs(o->code)]);
+		print(" %s", status_name[status_code]);
 }
 
 static void print_reconf(struct dhcpv6_option *opt, void (*print)(const char *fmt, ...))
