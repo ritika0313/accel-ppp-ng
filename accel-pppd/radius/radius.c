@@ -358,12 +358,20 @@ int rad_proc_attrs(struct rad_req_t *req)
 			} else if (attr->vendor->id == VENDOR_Accel_PPP) {
 				switch (attr->attr->id) {
 					case Accel_VRF_Name:
-						log_ppp_info2("radius: setting vrf_name to %s\n", attr->val.string);
+						if (attr->len < 0 || attr->len >= IFNAMSIZ) {
+							log_ppp_warn("radius: invalid Accel-VRF-Name length=%d (must be 1..%d or 0 for default VRF), rejecting Access-Accept\n", attr->len, IFNAMSIZ - 1);
+							return -1;
+						}
+
 						if (rpd->ses->vrf_name)
 							_free(rpd->ses->vrf_name);
 						rpd->ses->vrf_name = _malloc(attr->len + 1);
+						if (!rpd->ses->vrf_name)
+							break;
+
 						memcpy(rpd->ses->vrf_name, attr->val.string, attr->len);
 						rpd->ses->vrf_name[attr->len] = 0;
+						log_ppp_info2("radius: setting vrf_name to %s\n", rpd->ses->vrf_name);
 						break;
 				}
 				continue;
