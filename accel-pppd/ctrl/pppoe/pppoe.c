@@ -834,12 +834,16 @@ static int add_tag2(uint8_t *pack, size_t pack_size, const struct pppoe_tag *t)
 {
 	struct pppoe_hdr *hdr = (struct pppoe_hdr *)(pack + ETH_HLEN);
 	struct pppoe_tag *tag = (struct pppoe_tag *)(pack + ETH_HLEN + sizeof(*hdr) + ntohs(hdr->length));
-	if (pack_size <= ETH_HLEN + sizeof(*hdr) + ntohs(hdr->length) + ntohs(t->tag_len) || ntohs(t->tag_len) < 0)
+	int tag_len = ntohs(t->tag_len);
+	if (pack_size <= ETH_HLEN + sizeof(*hdr) + ntohs(hdr->length) + sizeof(struct pppoe_tag) + tag_len
+			|| tag_len < 0) {
+		log_error("pppoe: invalid tag len");
 		return -1;
+	}
 
-	memcpy(tag, t, sizeof(*t) + ntohs(t->tag_len));
+	memcpy(tag, t, sizeof(*t) + tag_len);
 
-	hdr->length = htons(ntohs(hdr->length) + sizeof(*tag) + ntohs(t->tag_len));
+	hdr->length = htons(ntohs(hdr->length) + sizeof(*tag) + tag_len);
 	return 0;
 }
 
