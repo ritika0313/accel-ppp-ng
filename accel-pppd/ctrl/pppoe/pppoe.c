@@ -1282,13 +1282,6 @@ static void pppoe_recv_PADR(struct pppoe_serv_t *serv, uint8_t *pack, int size)
 		}
 	}
 
-	if (service_name_tag_count != 1) {
-		if (conf_verbose)
-			log_warn("pppoe: discard PADR packet (must contain exactly one Service-Name tag, found %d)\n", service_name_tag_count);
-		pppoe_send_err(serv, ethhdr->h_source, host_uniq_tag, relay_sid_tag, CODE_PADS, TAG_SERVICE_NAME_ERROR);
-		return;
-	}
-
 	if (!ac_cookie_tag) {
 		if (conf_verbose)
 			log_warn("pppoe: discard PADR packet (no AC-Cookie tag present)\n");
@@ -1304,6 +1297,13 @@ static void pppoe_recv_PADR(struct pppoe_serv_t *serv, uint8_t *pack, int size)
 	if (check_cookie(serv, ethhdr->h_source, (uint8_t *)ac_cookie_tag->tag_data, relay_sid_tag)) {
 		if (conf_verbose)
 			log_warn("pppoe: discard PADR packet (incorrect AC-Cookie)\n");
+		return;
+	}
+
+	if (service_name_tag_count != 1) {
+		if (conf_verbose)
+			log_warn("pppoe: discard PADR packet (must contain exactly one Service-Name tag, found %d)\n", service_name_tag_count);
+		pppoe_send_err(serv, ethhdr->h_source, host_uniq_tag, relay_sid_tag, CODE_PADS, TAG_SERVICE_NAME_ERROR);
 		return;
 	}
 
