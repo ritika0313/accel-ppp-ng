@@ -5,7 +5,6 @@
  */
 
 #include <linux/if.h>
-#include <sys/ioctl.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <string.h>
@@ -46,19 +45,6 @@ static int nnle_nlmsg_handler(const struct sockaddr_nl *nladdr,
 
 	if (tb[IFLA_IFNAME] && strlen(RTA_DATA(tb[IFLA_IFNAME])) < IFNAMSIZ)
 		strncpy(ifname, RTA_DATA(tb[IFLA_IFNAME]), IFNAMSIZ - 1);
-
-	if (hdr->nlmsg_type == RTM_NEWLINK && *(uint32_t *)RTA_DATA(tb[IFLA_OPERSTATE]) == IF_OPER_DOWN) {
-
-		struct ifreq ifr;
-		memset(&ifr, 0, sizeof(ifr));
-		strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
-
-		net->sock_ioctl(SIOCGIFFLAGS, &ifr);
-		if (ifr.ifr_flags) {
-			ifr.ifr_flags |= IFF_UP;
-			net->sock_ioctl(SIOCSIFFLAGS, &ifr);
-		}
-	}
 
 	if (hdr->nlmsg_type == RTM_NEWLINK && *(uint32_t *)RTA_DATA(tb[IFLA_OPERSTATE]) == IF_OPER_UP) {
 		nnle_emit_callbacks(ifname, 1);
