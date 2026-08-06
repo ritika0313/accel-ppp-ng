@@ -46,8 +46,30 @@ static int nnle_nlmsg_handler(const struct sockaddr_nl *nladdr,
 	if (tb[IFLA_IFNAME] && strlen(RTA_DATA(tb[IFLA_IFNAME])) < IFNAMSIZ)
 		strncpy(ifname, RTA_DATA(tb[IFLA_IFNAME]), IFNAMSIZ - 1);
 
-	if (hdr->nlmsg_type == RTM_NEWLINK && *(uint32_t *)RTA_DATA(tb[IFLA_OPERSTATE]) == IF_OPER_UP) {
-		nnle_emit_callbacks(ifname, 1);
+	/*
+	 * During interface initialization the kernel may emit several RTM_NEWLINK
+	 * messages for the same interface. We only want to notify handlers when
+	 * the interface effectively becomes usable.
+	 *
+	 * To achieve this, we call the handlers on RTM_NEWLINK only if
+	 * the interface operstate is UP, or UNKNOWN and the interface
+	 * flags have changed to include IFF_UP.
+	 *
+	 * This filtering is particularly important for interfaces provided by VPP,
+	 * such as LCP tap and LCP bond, which may generate intermediate
+	 * RTM_NEWLINK events while they are being configured.
+	 */
+	if (hdr->nlmsg_type == RTM_NEWLINK
+	    && tb[IFLA_OPERSTATE]
+	    && RTA_PAYLOAD(tb[IFLA_OPERSTATE]) >= 1) {
+		unsigned char operstate = *(unsigned char *)RTA_DATA(tb[IFLA_OPERSTATE]);
+
+		if (operstate == IF_OPER_UP
+		    || (operstate == IF_OPER_UNKNOWN
+			&& (ifi->ifi_change & IFF_UP)
+			&& (ifi->ifi_flags & IFF_UP))) {
+			nnle_emit_callbacks(ifname, 1);
+		}
 	} else if (hdr->nlmsg_type == RTM_DELLINK) {
 		nnle_emit_callbacks(ifname, 0);
 	}
