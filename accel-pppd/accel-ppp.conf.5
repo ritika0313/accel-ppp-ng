@@ -226,7 +226,16 @@ Specify peer interface identifier for IPv6.
 - calculate interface identifier from IPv4 address, for example 192:168:0:1.
 .br
 .B calling-sid
-- calculate interface identifier from Calling-Station-Id.
+- calculate an opaque interface identifier from Calling-Station-Id,
+control-plane context, and
+.BR ipv6-peer-intf-id-secret
+using HMAC-SHA256.
+.TP
+.BI "ipv6-peer-intf-id-secret=" secret
+Secret key used by
+.B ipv6-peer-intf-id=calling-sid
+to derive stable per-peer interface identifiers with HMAC-SHA256.
+The secret must be a printable non-whitespace ASCII string with length between 16 and 128 characters.
 .TP
 .BI "ipv6-accept-peer-intf-id=" 0|1
 Specify whether to accept peer's interface identifier.
