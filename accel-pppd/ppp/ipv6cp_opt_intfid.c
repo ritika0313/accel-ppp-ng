@@ -3,10 +3,14 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
+#include <ctype.h>
 #include <errno.h>
+#include <stdint.h>
 #include <limits.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
+#include <openssl/hmac.h>
+#include <openssl/evp.h>
 #include "linux_ppp.h"
 
 #include "log.h"
@@ -23,12 +27,16 @@
 #define INTF_ID_CSID   2
 #define INTF_ID_IPV4   3
 
+#define INTF_ID_SECRET_MIN_LEN 16
+#define INTF_ID_SECRET_MAX_LEN 128
+
 static int conf_check_exists;
 static int conf_intf_id = INTF_ID_FIXED;
 static uint64_t conf_intf_id_val = 1;
 static int conf_peer_intf_id = INTF_ID_FIXED;
 static uint64_t conf_peer_intf_id_val = 2;
 static int conf_accept_peer_intf_id;
+static const char *conf_peer_intf_id_secret;
 
 static struct ipv6cp_option_t *ipaddr_init(struct ppp_ipv6cp_t *ipv6cp);
 static void ipaddr_free(struct ppp_ipv6cp_t *ipv6cp, struct ipv6cp_option_t *opt);
@@ -160,6 +168,126 @@ static uint64_t generate_intf_id(struct ppp_t *ppp)
 	return id;
 }
 
+static int is_iid_all_zero(const uint8_t iid[8])
+{
+	int i;
+
+	for (i = 0; i < 8; ++i) {
+		if (iid[i])
+			return 0;
+	}
+
+	return 1;
+}
+
+static int is_printable_ascii_secret(const char *secret)
+{
+	const unsigned char *p;
+
+	if (!secret || !*secret)
+		return 0;
+
+	for (p = (const unsigned char *)secret; *p; ++p) {
+		/* ASCII range 0x21 to 0x7E are printable non-whitespace characters */
+		if (*p <= 0x20 || *p > 0x7e)
+			return 0;
+	}
+
+	return 1;
+}
+
+/* RFC 5072 Section 4.1 requires the Interface-Identifier "u" bit to be
+ * zero unless an EUI-48/EUI-64-derived identifier is used for the remote
+ * peer. RFC 4291 requires avoiding the all-zero IID.
+ */
+static void normalize_opaque_iid(uint8_t iid[8])
+{
+	/* Clear EUI-64 U/L bit (0x02 in the first octet). */
+	iid[0] &= 0xfd;
+
+	if (is_iid_all_zero(iid))
+		iid[7] = 1;
+}
+
+static uint64_t generate_csid_intf_id(struct ppp_t *ppp)
+{
+	const char *csid;
+	const char *ctrl_name = "unknown";
+	unsigned int ctrl_type = 0;
+	char type_buf[12];
+	char *csid_norm = NULL;
+	char *context = NULL;
+	const char *prefix = "ctrl-type=";
+	const char *middle = "|ctrl-name=";
+	const char *suffix = "|csid=";
+	unsigned char digest[EVP_MAX_MD_SIZE];
+	unsigned int digest_len = 0;
+	uint8_t iid_bytes[8];
+	uint64_t id = 0;
+	size_t csid_len;
+	size_t ctrl_name_len;
+	size_t context_len;
+	int secret_len;
+	int i;
+	int n;
+
+	if (!ppp || !ppp->ses.ctrl)
+		return 0;
+
+	csid = ppp->ses.ctrl->calling_station_id;
+	if (!csid || !*csid)
+		return 0;
+
+	if (!conf_peer_intf_id_secret || !*conf_peer_intf_id_secret)
+		return 0;
+
+	ctrl_type = ppp->ses.ctrl->type;
+	if (ppp->ses.ctrl->name)
+		ctrl_name = ppp->ses.ctrl->name;
+
+	n = snprintf(type_buf, sizeof(type_buf), "%u", ctrl_type);
+	if (n <= 0 || n >= (int)sizeof(type_buf))
+		return 0;
+
+	csid_len = strlen(csid);
+	ctrl_name_len = strlen(ctrl_name);
+	context_len = strlen(prefix) + strlen(type_buf) + strlen(middle) + ctrl_name_len + strlen(suffix) + csid_len;
+
+	csid_norm = _malloc(csid_len + 1);
+	if (!csid_norm)
+		return 0;
+
+	for (i = 0; i < (int)csid_len; ++i)
+		csid_norm[i] = tolower((unsigned char)csid[i]);
+	csid_norm[csid_len] = '\0';
+
+	context = _malloc(context_len + 1);
+	if (!context)
+		goto out;
+
+	n = snprintf(context, context_len + 1, "%s%s%s%s%s%s", prefix, type_buf, middle, ctrl_name, suffix, csid_norm);
+	if (n <= 0 || (size_t)n != context_len)
+		goto out;
+
+	secret_len = (int)strlen(conf_peer_intf_id_secret);
+
+	if (!HMAC(EVP_sha256(), conf_peer_intf_id_secret, secret_len,
+			(const unsigned char *)context, context_len, digest, &digest_len))
+		goto out;
+
+	if (digest_len < sizeof(iid_bytes))
+		goto out;
+
+	memcpy(iid_bytes, digest, sizeof(iid_bytes));
+	normalize_opaque_iid(iid_bytes);
+	memcpy(&id, iid_bytes, sizeof(id));
+
+out:
+	_free(context);
+	_free(csid_norm);
+	return id;
+}
+
 static uint64_t generate_peer_intf_id(struct ppp_t *ppp)
 {
 	char str[4];
@@ -168,7 +296,7 @@ static uint64_t generate_peer_intf_id(struct ppp_t *ppp)
 	union {
 		uint64_t intf_id;
 		uint16_t addr16[4];
-	} u;
+	} u = { .intf_id = 0 };
 
 	switch (conf_peer_intf_id) {
 		case INTF_ID_FIXED:
@@ -178,6 +306,7 @@ static uint64_t generate_peer_intf_id(struct ppp_t *ppp)
 			read(urandom_fd, &u, sizeof(u));
 			break;
 		case INTF_ID_CSID:
+			u.intf_id = generate_csid_intf_id(ppp);
 			break;
 		case INTF_ID_IPV4:
 			if (ppp->ses.ipv4) {
@@ -316,6 +445,7 @@ err:
 static void load_config(void)
 {
 	const char *opt;
+	size_t secret_len;
 
 	opt = conf_get_opt("ppp", "check-ip");
 	if (!opt)
@@ -346,6 +476,22 @@ static void load_config(void)
 			conf_peer_intf_id_val = parse_intfid(opt);
 		}
 	}
+
+	conf_peer_intf_id_secret = conf_get_opt("ppp", "ipv6-peer-intf-id-secret");
+	if (conf_peer_intf_id_secret && *conf_peer_intf_id_secret) {
+		secret_len = strlen(conf_peer_intf_id_secret);
+		if (secret_len < INTF_ID_SECRET_MIN_LEN ||
+		    secret_len > INTF_ID_SECRET_MAX_LEN) {
+			log_error("ppp: ipv6-peer-intf-id-secret length must be between %d and %d characters\n",
+				INTF_ID_SECRET_MIN_LEN, INTF_ID_SECRET_MAX_LEN);
+			conf_peer_intf_id_secret = NULL;
+		} else if (!is_printable_ascii_secret(conf_peer_intf_id_secret)) {
+			log_error("ppp: ipv6-peer-intf-id-secret must contain only printable non-whitespace ASCII characters\n");
+			conf_peer_intf_id_secret = NULL;
+		}
+	}
+	if (conf_peer_intf_id == INTF_ID_CSID && (!conf_peer_intf_id_secret || !*conf_peer_intf_id_secret))
+		log_error("ppp: ipv6-peer-intf-id=calling-sid requires non-empty ipv6-peer-intf-id-secret\n");
 
 	opt = conf_get_opt("ppp", "ipv6-accept-peer-intf-id");
 	if (opt)
