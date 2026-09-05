@@ -360,6 +360,8 @@ int __export ap_session_rename(struct ap_session *ses, const char *ifname, int l
 #ifdef HAVE_VRF
 int __export ap_session_vrf(struct ap_session *ses, const char *vrf_name, int len)
 {
+	int vrf_ifindex = 0;
+
 	if (len == -1) {
 		if (!vrf_name)
 			len = 0;
@@ -371,8 +373,6 @@ int __export ap_session_vrf(struct ap_session *ses, const char *vrf_name, int le
 		log_ppp_error("vrf name length %d out of bounds (must be 0..%d)\n", len, IFNAMSIZ - 1);
 		return -1;
 	}
-
-	int vrf_ifindex = 0;
 
 	if (len) {
 		vrf_ifindex = ses->net->get_ifindex(vrf_name);
