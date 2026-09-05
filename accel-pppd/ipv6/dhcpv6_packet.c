@@ -83,8 +83,8 @@ static int validate_aftr_name(const uint8_t *data, uint16_t len)
 
 		if (label_len == 0) {
 			if (!nonzero_label_present || offset != len) {
-				log_warn("dhcpv6: invalid AFTR-Name option: missing non-zero label and/or\
-					 invalid termination\n");
+				log_warn("dhcpv6: invalid AFTR-Name option: missing non-zero label "
+					 "and/or invalid termination\n");
 				return 0;
 			}
 			return 1;
