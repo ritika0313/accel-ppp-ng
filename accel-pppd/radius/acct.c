@@ -37,8 +37,10 @@ static int req_set_RA(struct rad_req_t *req, const char *secret)
 	 */
 	memset(req->RA, 0, sizeof(req->RA));
 
-	if (rad_packet_build(req->pack, req->RA))
+	if (rad_packet_build(req->pack, req->RA)) {
+		EVP_MD_CTX_free(evp_ctx);
 		return -1;
+	}
 
 	EVP_DigestInit_ex(evp_ctx, EVP_md5(), NULL);
 	EVP_DigestUpdate(evp_ctx, req->pack->buf, req->pack->len);
